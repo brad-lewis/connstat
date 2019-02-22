@@ -83,10 +83,13 @@ class Field(Enum):
 output_fields = [Field.laddr, Field.lport, Field.raddr,
                  Field.rport, Field.state]
 
+unique_fields = [Field.laddr, Field.lport, Field.raddr, Field.rport]
+
 def lazy_load_module():
     lsmod=os.system("lsmod | grep connstat > /dev/null")
     if lsmod != 0:
-        print("Loading connstat kernel module")
+        if not args.parsable:
+            print("Loading connstat kernel module")
         os.system("sudo depmod;sudo modprobe connstat");
 
 def filter_skip(line_str_list):
@@ -114,32 +117,46 @@ def loopback_skip(line_str_list):
 #
 def connstat_regurgitate():
     headings_line = True
-    for line in open('/proc/net/stats_tcp'):
-        line_str_list = line.strip().split(',')
+    table_str = ""
+    unique_strings = ""
+    for line_in in open('/proc/net/stats_tcp'):
+        line_str_list = line_in.strip().split(',')
+        line_out = ""
+        dup_check_line = ""
 
-        # Skip filtered out lines; not the headings(first) line
+        # Omit headings(first) line for parsable output
+        if args.parsable and headings_line:
+            headings_line = False
+            continue
+
+        # Skip filtered out lines; doesn't apply to headings
         if not headings_line and (loopback_skip(line_str_list)
                                   or filter_skip(line_str_list)):
             continue
         headings_line = False
 
+	# Ignore duplicate lines
+        for f in unique_fields:
+            dup_check_line += line_str_list[f.index]
+        if dup_check_line in unique_strings:
+            continue
+        unique_strings += dup_check_line + '\n' 
+
         # Print selected fields using specified format
         if args.parsable:
             first_field = True
-            output = ''
             for f in output_fields:
                 if not first_field:
-                    output += ','
-                output += line_str_list[f.index]
+                    line_out += ','
+                line_out += line_str_list[f.index]
                 first_field = False
-            print (output)
         else:
             for f in output_fields:
-                format = '%' + str(f.print_width) + 's'
-                print (format % (line_str_list[f.index]), end="")
-            print()
+                sformat = "{: >" + str(f.print_width) + "}"
+                line_out += sformat.format(line_str_list[f.index], format)
+        table_str += line_out + '\n'
 
-lazy_load_module()
+    return table_str
 
 parser = argparse.ArgumentParser(prog='connstat')
 
@@ -201,14 +218,17 @@ if args.parsable:
     if args.FIELDS == 'all':
         raise ValueError('\'-o all\' is invalid with parsable output')
 
+lazy_load_module()
 
 while True:
+    output = ""
     if args.TYPE is 'u':
-        print (time.time())
+        output += "= " + str(time.time()) + "\n"
     elif args.TYPE is 'd':
-        os.system("date")
+        output += "= " + str(os.system("data")) + "\n"
 
-    connstat_regurgitate()
+    output += connstat_regurgitate()
+    print (output, end="")
 
     if args.SECONDS is None:
         break
